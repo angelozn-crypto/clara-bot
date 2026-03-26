@@ -1,83 +1,130 @@
 import os
 import logging
+import tempfile
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import anthropic
+from groq import Groq
 
-# ─── CONFIGURAÇÕES ────────────────────────────────────────────────
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")   # cole seu token aqui ou use variável de ambiente
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")  # sua chave da Anthropic
-
-# ─── SETUP ────────────────────────────────────────────────────────
-logging.basicConfig(level=logging.INFO)
+# Configuração de logs
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+# Clientes
+telegram_token = os.environ["TELEGRAM_BOT_TOKEN"]
+anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
 # Histórico de conversa por usuário (em memória)
-historico: dict[int, list] = {}
+conversation_history: dict = {}
 
 SYSTEM_PROMPT = """Você é Clara, uma assistente inteligente e objetiva integrada ao Telegram. 
 Responda sempre em português brasileiro, de forma clara e direta.
-Você pode ajudar com análises, redação, estratégia comercial, planilhas, e qualquer outra tarefa."""
+Você pode ajudar com estratégia comercial, vendas, redação, análises, código, e qualquer outra tarefa."""
 
-# ─── HANDLERS ─────────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user.first_name
-    historico[update.effective_user.id] = []
+    user = update.effective_user
     await update.message.reply_text(
-        f"Olá, {user}! 👋 Sou a Clara, sua assistente IA.\n\n"
-        "Pode me mandar qualquer pergunta ou tarefa. Digite /limpar para reiniciar nossa conversa."
+        f"Olá, {user.first_name}! 👋 Sou a *Clara*, sua assistente com IA.\n\n"
+        "Pode me mandar mensagem de texto ou áudio — estou aqui pra ajudar!\n\n"
+        "_Use /limpar para resetar o histórico da conversa._",
+        parse_mode="Markdown"
     )
 
 async def limpar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    historico[update.effective_user.id] = []
-    await update.message.reply_text("✅ Conversa reiniciada! Como posso te ajudar?")
+    user_id = update.effective_user.id
+    conversation_history[user_id] = []
+    await update.message.reply_text("✅ Histórico limpo! Começando uma nova conversa.")
+
+async def transcrever_audio(file) -> str:
+    """Baixa o áudio do Telegram e transcreve via Groq (Whisper gratuito)."""
+    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+        await file.download_to_drive(tmp.name)
+        with open(tmp.name, "rb") as audio_file:
+            transcricao = groq_client.audio.transcriptions.create(
+                file=("audio.ogg", audio_file),
+                model="whisper-large-v3",
+                language="pt"
+            )
+    return transcricao.text
+
+async def responder_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+    try:
+        voice = update.message.voice or update.message.audio
+        file = await context.bot.get_file(voice.file_id)
+        texto = await transcrever_audio(file)
+
+        if not texto.strip():
+            await update.message.reply_text("Não consegui entender o áudio. Pode repetir?")
+            return
+
+        # Avisa o que foi entendido e processa como texto
+        await update.message.reply_text(f"🎙️ *Entendi:* _{texto}_", parse_mode="Markdown")
+        update.message.text = texto
+        await responder(update, context)
+
+    except Exception as e:
+        logger.error(f"Erro ao processar áudio: {e}")
+        await update.message.reply_text("Erro ao processar o áudio. Tente novamente.")
 
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    texto = update.message.text
+    user_message = update.message.text
 
-    # Inicializa histórico do usuário se não existir
-    if user_id not in historico:
-        historico[user_id] = []
+    # Inicializa histórico se necessário
+    if user_id not in conversation_history:
+        conversation_history[user_id] = []
 
     # Adiciona mensagem do usuário ao histórico
-    historico[user_id].append({"role": "user", "content": texto})
+    conversation_history[user_id].append({
+        "role": "user",
+        "content": user_message
+    })
 
-    # Limita histórico a 20 mensagens para controlar tokens
-    if len(historico[user_id]) > 20:
-        historico[user_id] = historico[user_id][-20:]
+    # Limita histórico a 20 mensagens para não explodir tokens
+    if len(conversation_history[user_id]) > 20:
+        conversation_history[user_id] = conversation_history[user_id][-20:]
 
     # Mostra "digitando..."
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     try:
-        resposta = client.messages.create(
+        response = anthropic_client.messages.create(
             model="claude-opus-4-5",
             max_tokens=1024,
             system=SYSTEM_PROMPT,
-            messages=historico[user_id]
+            messages=conversation_history[user_id]
         )
 
-        texto_resposta = resposta.content[0].text
+        assistant_message = response.content[0].text
 
-        # Adiciona resposta da IA ao histórico
-        historico[user_id].append({"role": "assistant", "content": texto_resposta})
+        # Adiciona resposta ao histórico
+        conversation_history[user_id].append({
+            "role": "assistant",
+            "content": assistant_message
+        })
 
-        await update.message.reply_text(texto_resposta)
+        await update.message.reply_text(assistant_message)
 
     except Exception as e:
-        logger.error(f"Erro: {e}")
-        await update.message.reply_text("⚠️ Ocorreu um erro. Tente novamente em instantes.")
+        logger.error(f"Erro ao chamar API: {e}")
+        await update.message.reply_text("Ocorreu um erro ao processar sua mensagem. Tente novamente.")
 
-# ─── MAIN ──────────────────────────────────────────────────────────
 def main():
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app = ApplicationBuilder().token(telegram_token).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("limpar", limpar))
+    app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, responder_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    logger.info("Bot Clara iniciado ✅")
+
+    logger.info("Bot Clara iniciado com suporte a áudio!")
     app.run_polling()
 
 if __name__ == "__main__":
