@@ -6,19 +6,16 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import anthropic
 from groq import Groq
 
-# Configuração de logs
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# Clientes
 telegram_token = os.environ["TELEGRAM_BOT_TOKEN"]
 anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 
-# Histórico de conversa por usuário (em memória)
 conversation_history: dict = {}
 
 SYSTEM_PROMPT = """Você é Clara, uma assistente inteligente e objetiva integrada ao Telegram. 
@@ -39,59 +36,17 @@ async def limpar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conversation_history[user_id] = []
     await update.message.reply_text("✅ Histórico limpo! Começando uma nova conversa.")
 
-async def transcrever_audio(file) -> str:
-    """Baixa o áudio do Telegram e transcreve via Groq (Whisper gratuito)."""
-    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
-        await file.download_to_drive(tmp.name)
-        with open(tmp.name, "rb") as audio_file:
-            transcricao = groq_client.audio.transcriptions.create(
-                file=("audio.ogg", audio_file),
-                model="whisper-large-v3",
-                language="pt"
-            )
-    return transcricao.text
-
-async def responder_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str):
     user_id = update.effective_user.id
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
-    try:
-        voice = update.message.voice or update.message.audio
-        file = await context.bot.get_file(voice.file_id)
-        texto = await transcrever_audio(file)
-
-        if not texto.strip():
-            await update.message.reply_text("Não consegui entender o áudio. Pode repetir?")
-            return
-
-        # Avisa o que foi entendido e processa como texto
-        await update.message.reply_text(f"🎙️ *Entendi:* _{texto}_", parse_mode="Markdown")
-        update.message.text = texto
-        await responder(update, context)
-
-    except Exception as e:
-        logger.error(f"Erro ao processar áudio: {e}")
-        await update.message.reply_text("Erro ao processar o áudio. Tente novamente.")
-
-async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_message = update.message.text
-
-    # Inicializa histórico se necessário
     if user_id not in conversation_history:
         conversation_history[user_id] = []
 
-    # Adiciona mensagem do usuário ao histórico
-    conversation_history[user_id].append({
-        "role": "user",
-        "content": user_message
-    })
+    conversation_history[user_id].append({"role": "user", "content": texto})
 
-    # Limita histórico a 20 mensagens para não explodir tokens
     if len(conversation_history[user_id]) > 20:
         conversation_history[user_id] = conversation_history[user_id][-20:]
 
-    # Mostra "digitando..."
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
 
     try:
@@ -101,29 +56,52 @@ async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
             system=SYSTEM_PROMPT,
             messages=conversation_history[user_id]
         )
-
         assistant_message = response.content[0].text
-
-        # Adiciona resposta ao histórico
-        conversation_history[user_id].append({
-            "role": "assistant",
-            "content": assistant_message
-        })
-
+        conversation_history[user_id].append({"role": "assistant", "content": assistant_message})
         await update.message.reply_text(assistant_message)
 
     except Exception as e:
         logger.error(f"Erro ao chamar API: {e}")
         await update.message.reply_text("Ocorreu um erro ao processar sua mensagem. Tente novamente.")
 
+async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await processar_mensagem(update, context, update.message.text)
+
+async def responder_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+    try:
+        voice = update.message.voice or update.message.audio
+        file = await context.bot.get_file(voice.file_id)
+
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+            await file.download_to_drive(tmp.name)
+            with open(tmp.name, "rb") as audio_file:
+                transcricao = groq_client.audio.transcriptions.create(
+                    file=("audio.ogg", audio_file),
+                    model="whisper-large-v3",
+                    language="pt"
+                )
+
+        texto = transcricao.text.strip()
+
+        if not texto:
+            await update.message.reply_text("Não consegui entender o áudio. Pode repetir?")
+            return
+
+        await update.message.reply_text(f"🎙️ *Entendi:* _{texto}_", parse_mode="Markdown")
+        await processar_mensagem(update, context, texto)
+
+    except Exception as e:
+        logger.error(f"Erro ao processar áudio: {e}")
+        await update.message.reply_text("Erro ao processar o áudio. Tente novamente.")
+
 def main():
     app = ApplicationBuilder().token(telegram_token).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("limpar", limpar))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, responder_audio))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-
     logger.info("Bot Clara iniciado com suporte a áudio!")
     app.run_polling()
 
