@@ -1,6 +1,8 @@
 import os
 import logging
 import tempfile
+import json
+from datetime import datetime
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import anthropic
@@ -9,6 +11,8 @@ import PyPDF2
 import pandas as pd
 from openai import OpenAI
 import httpx
+import gspread
+from google.oauth2.service_account import Credentials
 
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -21,6 +25,14 @@ anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
+# Google Sheets
+SPREADSHEET_ID = "1aM5cU7zByL6UF9wSEHTEl1nnr83FwSDS6mOLNTTlsgg"
+google_creds_json = os.environ["GOOGLE_CREDENTIALS_JSON"]
+creds_dict = json.loads(google_creds_json)
+scopes = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+sheets_client = gspread.authorize(creds)
+
 conversation_history: dict = {}
 
 SYSTEM_PROMPT = """Você é Clara, assistente estratégica pessoal de Angelo Zambom Netto, Head Comercial da TRILIA, operando via contrato de serviço com a Essencia Marketing LTDA através da sua empresa Angelo Zambom Netto LTDA. Você está integrada ao Telegram dele.
@@ -29,6 +41,12 @@ Responda sempre em português brasileiro, de forma clara, direta e orientada a r
 
 Quando o usuário pedir para CRIAR, GERAR ou FAZER uma imagem, ilustração, foto ou visual, responda EXATAMENTE neste formato:
 GERAR_IMAGEM: [descrição detalhada em inglês para o DALL-E]
+
+Quando o usuário quiser REGISTRAR dados do time (contatos, conversas, reuniões, fechamentos, receita), extraia as informações e responda EXATAMENTE neste formato JSON (e nada mais além do JSON):
+REGISTRAR_DADOS: {"data": "DD/MM/AAAA", "vendedor": "Nome", "empresas": 0, "conversas": 0, "reunioes": 0, "fechamentos": 0, "receita": 0}
+
+Se a data não for mencionada, use a data de hoje. Se algum campo não for mencionado, use 0.
+Vendedores válidos: Lucas, Iago Quesada, Andreia (SDR)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CONTEXTO DO NEGÓCIO
@@ -77,7 +95,6 @@ KPIs DO FUNIL COMERCIAL
 - CAC: monitorado por canal
 
 Dimensionamento MVP: 1 SDR + 1 Closer
-CRM: Go High Level com pipelines de Pré-Vendas, Vendas e CS
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 METAS MENSAIS (3 NÍVEIS)
@@ -88,16 +105,6 @@ METAS MENSAIS (3 NÍVEIS)
 - Ambiciosa: meta de excelência com bônus
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PROPOSTA ATIVA
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-Areia que Canta — Treinamento de Alta Performance e Liderança + CIS Assessment
-- Opção A: 10 gerentes por R$9.000
-- Opção B: 23 gestores e líderes por R$19.500
-- Formato presencial, 1 dia (4h treinamento + 4h CIS Assessment)
-- Status: aguardando retorno
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FRAMEWORK HORMOZI — $100M OFFERS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -105,57 +112,28 @@ GRAND SLAM OFFER — oferta irrecusável que elimina objeções antes de surgire
 
 Equação de Valor (Value Equation):
 Valor = (Sonho x Probabilidade Percebida) / (Tempo x Esforço)
-- Aumentar: resultado desejado + probabilidade de sucesso
-- Diminuir: tempo até o resultado + esforço/sacrifício necessário
 
 Construção da oferta:
-1. Identificar o sonho do cliente (resultado final desejado)
+1. Identificar o sonho do cliente
 2. Listar todos os obstáculos entre ele e o sonho
 3. Transformar cada obstáculo em uma solução (entregável)
 4. Empilhar os entregáveis em uma oferta irrecusável
-5. Nomear a oferta de forma que comunique a transformação
+5. Nomear a oferta comunicando a transformação
 
-Precificação:
-- Precificar por valor entregue, nunca por custo ou tempo
-- Quanto maior o problema resolvido, maior o ticket justo
-- Oferta premium justifica preço premium — nunca competir por preço
-
-Stacking de bônus:
-- Cada bônus deve resolver uma objeção específica
-- Bônus devem ter valor percebido maior que o preço total
-- Criar escassez real (vagas, prazo, condição)
-
-Garantias:
-- Garantia incondicional elimina risco do cliente
-- Quanto mais forte a garantia, maior a conversão
-- Quem tem resultado real não teme oferecer garantia
+Precificação por valor, stacking de bônus, garantias fortes.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FRAMEWORK HORMOZI — $100M LEADS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 CORE 4 — canais de aquisição:
-1. Orgânico Quente — base existente (ex-clientes, indicações, seguidores)
-2. Orgânico Frio — prospecção outbound sem investimento em mídia
-3. Pago Quente — anúncios para audiência que já conhece a marca
-4. Pago Frio — anúncios para audiência fria, escala máxima
+1. Orgânico Quente — base existente
+2. Orgânico Frio — prospecção outbound
+3. Pago Quente — anúncios para audiência conhecida
+4. Pago Frio — anúncios para audiência fria
 
-Funil de aquisição:
-- Lead Magnet: entrega valor antecipado, capta contato
-- Tripwire / Front End: primeira compra de baixo risco
-- Core Offer: oferta principal (Back End)
-- High Ticket: oferta premium para melhores clientes (High End)
-
-Reativação de base:
-- Lista fria é ativo subutilizado
-- Campanha de reativação com nova oferta ou novo ângulo
-- Ex-clientes convertem 3-5x mais que leads frios
-
-Scripts de outreach (prospecção fria):
-- Personalização real (não genérica)
-- Foco no problema do prospect, não no produto
-- CTA direto e de baixo atrito (reunião, não venda)
-- Volume + qualidade = pipeline previsível
+Funil: Lead Magnet → Front End → Back End → High End
+Reativação de base, scripts de outreach, conteúdo como aquisição.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 COMO VOCÊ DEVE AGIR
@@ -168,7 +146,36 @@ COMO VOCÊ DEVE AGIR
 - Relatório do time → métricas de SDR e Closer separadas
 - Diagnóstico comercial → use os 5 pilares FSS
 - Análise de arquivo → foco comercial, insights acionáveis
-- Pedido de imagem → responda com GERAR_IMAGEM: [prompt em inglês]"""
+- Pedido de imagem → responda com GERAR_IMAGEM: [prompt em inglês]
+- Registro de dados → responda com REGISTRAR_DADOS: {json}"""
+
+def registrar_na_planilha(dados: dict) -> str:
+    try:
+        sheet = sheets_client.open_by_key(SPREADSHEET_ID)
+        aba = sheet.worksheet("Dados")
+
+        data_str = dados.get("data", datetime.now().strftime("%d/%m/%Y"))
+        try:
+            data_obj = datetime.strptime(data_str, "%d/%m/%Y")
+            data_formatada = data_obj.strftime("%Y-%m-%d")
+        except:
+            data_formatada = data_str
+
+        nova_linha = [
+            data_formatada,
+            dados.get("vendedor", ""),
+            dados.get("empresas", 0),
+            dados.get("conversas", 0),
+            dados.get("reunioes", 0),
+            dados.get("fechamentos", 0),
+            dados.get("receita", 0)
+        ]
+
+        aba.append_row(nova_linha)
+        return f"✅ Registrado na planilha:\n📅 {data_str} | 👤 {dados.get('vendedor')}\n📞 {dados.get('empresas')} contatos | 💬 {dados.get('conversas')} conversas | 📅 {dados.get('reunioes')} reuniões | 🤝 {dados.get('fechamentos')} fechamentos | 💰 R${dados.get('receita')}"
+    except Exception as e:
+        logger.error(f"Erro ao registrar na planilha: {e}")
+        return f"❌ Erro ao registrar na planilha: {str(e)}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -179,7 +186,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎙️ Áudios\n"
         "📄 PDFs\n"
         "📊 Planilhas Excel e CSV\n"
-        "🎨 Geração de imagens\n\n"
+        "🎨 Geração de imagens\n"
+        "📋 Registrar dados do time na planilha\n\n"
         "_Use /limpar para resetar o histórico._",
         parse_mode="Markdown"
     )
@@ -212,7 +220,7 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE,
         assistant_message = response.content[0].text
         conversation_history[user_id].append({"role": "assistant", "content": assistant_message})
 
-        # Verifica se é pedido de imagem
+        # Geração de imagem
         if assistant_message.startswith("GERAR_IMAGEM:"):
             prompt_imagem = assistant_message.replace("GERAR_IMAGEM:", "").strip()
             await update.message.reply_text("🎨 Gerando imagem...")
@@ -226,15 +234,21 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 n=1
             )
             image_url = img_response.data[0].url
-
-            # Baixa e envia a imagem
             img_data = httpx.get(image_url).content
+
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 tmp.write(img_data)
                 tmp_path = tmp.name
 
             with open(tmp_path, "rb") as img_file:
                 await update.message.reply_photo(photo=img_file)
+
+        # Registro na planilha
+        elif assistant_message.startswith("REGISTRAR_DADOS:"):
+            json_str = assistant_message.replace("REGISTRAR_DADOS:", "").strip()
+            dados = json.loads(json_str)
+            resultado = registrar_na_planilha(dados)
+            await update.message.reply_text(resultado)
 
         else:
             if len(assistant_message) > 4096:
@@ -343,10 +357,7 @@ async def responder_documento(update: Update, context: ContextTypes.DEFAULT_TYPE
             await processar_mensagem(update, context, prompt)
 
         else:
-            await update.message.reply_text(
-                f"Formato não suportado.\n\nSuporto: PDF, Excel (.xlsx), CSV, TXT",
-                parse_mode="Markdown"
-            )
+            await update.message.reply_text("Formato não suportado.\n\nSuporto: PDF, Excel (.xlsx), CSV, TXT")
 
     except Exception as e:
         logger.error(f"Erro ao processar documento: {e}")
@@ -359,7 +370,7 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, responder_audio))
     app.add_handler(MessageHandler(filters.Document.ALL, responder_documento))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    logger.info("Bot Clara iniciado!")
+    logger.info("Bot Clara iniciado com Google Sheets!")
     app.run_polling()
 
 if __name__ == "__main__":
