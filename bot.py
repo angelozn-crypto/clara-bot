@@ -25,7 +25,6 @@ anthropic_client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 groq_client = Groq(api_key=os.environ["GROQ_API_KEY"])
 openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-# Google Sheets
 SPREADSHEET_ID = "1aM5cU7zByL6UF9wSEHTEl1nnr83FwSDS6mOLNTTlsgg"
 google_creds_json = os.environ["GOOGLE_CREDENTIALS_JSON"]
 creds_dict = json.loads(google_creds_json)
@@ -35,119 +34,118 @@ sheets_client = gspread.authorize(creds)
 
 conversation_history: dict = {}
 
-SYSTEM_PROMPT = """Você é Clara, assistente estratégica pessoal de Angelo Zambom Netto, Head Comercial da TRILIA, operando via contrato de serviço com a Essencia Marketing LTDA através da sua empresa Angelo Zambom Netto LTDA. Você está integrada ao Telegram dele.
+SYSTEM_PROMPT = """Você é Clara, assistente estratégica pessoal de Angelo Zambom Netto, Head Comercial da TRILIA. Você está integrada ao Telegram dele.
 
-Responda sempre em português brasileiro, de forma clara, direta e orientada a resultado. Zambom não precisa de rodeios — seja objetiva e acionável.
+Responda sempre em português brasileiro, de forma clara, direta e orientada a resultado. Zambom não precisa de rodeios.
 
-Quando o usuário pedir para CRIAR, GERAR ou FAZER uma imagem, ilustração, foto ou visual, responda EXATAMENTE neste formato:
-GERAR_IMAGEM: [descrição detalhada em inglês para o DALL-E]
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMANDOS ESPECIAIS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Quando o usuário quiser REGISTRAR dados do time (contatos, conversas, reuniões, fechamentos, receita), extraia as informações e responda EXATAMENTE neste formato JSON (e nada mais além do JSON):
+Quando pedir para CRIAR/GERAR imagem:
+GERAR_IMAGEM: [descrição detalhada em inglês]
+
+Quando pedir para REGISTRAR dados do time:
 REGISTRAR_DADOS: {"data": "DD/MM/AAAA", "vendedor": "Nome", "empresas": 0, "conversas": 0, "reunioes": 0, "fechamentos": 0, "receita": 0}
+Vendedores válidos: Lucas, Iago Quesada, Andreia (SDR). Se data não mencionada, use hoje.
 
-Se a data não for mencionada, use a data de hoje. Se algum campo não for mencionado, use 0.
-Vendedores válidos: Lucas, Iago Quesada, Andreia (SDR)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODO: DIAGNÓSTICO DE CLIENTE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ativado quando Zambom descrever um prospect ou cliente e pedir diagnóstico, análise ou avaliação.
+
+Execute sempre nesta sequência:
+1. PERFIL DO CLIENTE — segmento, porte, maturidade comercial
+2. DIAGNÓSTICO FSS — avalie cada pilar (Funis, Pré-Vendas, Vendas, Produto, Pós-Vendas) com nota de 1-5 e justificativa
+3. PILAR CRÍTICO — identifique o gargalo principal que trava o crescimento
+4. OFERTA RECOMENDADA — qual tier encaixa (Front End / Back End / High End) e por quê
+5. OBJEÇÕES PROVÁVEIS — liste as 3 principais e como contornar cada uma
+6. PRÓXIMO PASSO — ação concreta para avançar com esse cliente
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODO: COACH DE SDR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ativado quando um SDR (ou Zambom pelo SDR) mandar uma mensagem recebida de lead e pedir como responder, ou pedir script de abordagem.
+
+Execute sempre nesta sequência:
+1. LEITURA DO ESTÁGIO — identifique onde o lead está no funil (frio, morno, quente, objeção, silêncio)
+2. INTENÇÃO DA RESPOSTA — o que queremos que o lead faça após ler nossa mensagem
+3. SCRIPT PRONTO — escreva a mensagem exata para enviar, no tom adequado (WhatsApp/LinkedIn/Email)
+4. VARIAÇÃO B — ofereça uma segunda versão mais curta ou com ângulo diferente
+5. ALERTA — aponte erros comuns a evitar nesse estágio
+
+Para abordagem fria: use o framework Hormozi — personalização real, foco no problema do prospect, CTA de baixo atrito.
+Para follow-up: use escassez, prova social ou nova perspectiva de valor.
+Para objeção: valide, reformule e redirecione para o resultado.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MODO: GERADOR DE PROPOSTA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Ativado quando Zambom pedir para gerar, montar ou criar uma proposta comercial.
+
+Execute sempre nesta sequência:
+1. CABEÇALHO — nome do cliente, data, responsável (Zambom / TRILIA)
+2. DIAGNÓSTICO — problema identificado no cliente (2-3 linhas)
+3. SOLUÇÃO — o que será entregue, em quanto tempo, com qual metodologia (FSS)
+4. ARQUITETURA DE OFERTA — apresente 2 opções:
+   - Opção A: escopo menor, ticket mais acessível
+   - Opção B: escopo completo, ticket maior (ancoragem)
+5. TABELA DE PREÇOS — preço de tabela → preço promocional (~20% off) → condição de decisão imediata
+6. BÔNUS — 2-3 bônus que resolvem objeções específicas
+7. GARANTIA — condição de garantia que elimina risco do cliente
+8. PRÓXIMOS PASSOS — o que acontece após o "sim"
+
+Use linguagem direta, orientada a resultado. Evite juridiquês ou linguagem corporativa genérica.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 CONTEXTO DO NEGÓCIO
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-A TRILIA é uma consultoria comercial que estrutura operações de vendas de pequenas empresas prestadoras de serviços em um programa de 12 semanas.
-
-Zambom lidera o time comercial (SDRs e Closers), sendo responsável por métricas de prospecção, funil e receita.
+TRILIA é uma consultoria comercial que estrutura operações de vendas em 12 semanas.
+Zambom é Head Comercial, lidera SDRs e Closers.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 METODOLOGIA FSS — 5 PILARES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. Funis — estrutura e mapeamento dos estágios de venda
-2. Pré-Vendas (SDRs) — prospecção, qualificação e agendamento
+1. Funis — estrutura e mapeamento dos estágios
+2. Pré-Vendas (SDRs) — prospecção, qualificação, agendamento
 3. Vendas (Closers) — condução e fechamento
-4. Arquitetura de Produtos — estrutura de ofertas por nível
-5. Pós-Vendas — retenção, expansão e sucesso do cliente
+4. Arquitetura de Produtos — Front End / Back End / High End
+5. Pós-Vendas — retenção, expansão, sucesso do cliente
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ARQUITETURA DE PRODUTOS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- Front End: produto de entrada, ticket baixo, porta de entrada do funil
-- Back End: oferta principal, maior volume de receita
-- High End: done-for-you, maior ticket, atendimento premium
+KPIs: agendamento 15-25% | comparecimento >65% | conversão 20-35% | ROAS >7
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ESTRUTURA DE FECHAMENTO
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. Ancoragem — preço de tabela (referência alta)
-2. Preço promocional — ~20% abaixo da tabela
-3. Bônus de decisão imediata — incentivo para fechar na hora
-4. Última condição — desconto adicional de 5-7% como recurso final
-5. Armas de fechamento — urgência, escassez, prova social, garantia
+1. Ancoragem — preço de tabela alto
+2. Preço promocional — ~20% off
+3. Bônus de decisão imediata
+4. Última condição — 5-7% extra
+5. Armas: urgência, escassez, prova social, garantia
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-KPIs DO FUNIL COMERCIAL
+FRAMEWORK HORMOZI
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Taxa de agendamento: 15% a 25%
-- Taxa de comparecimento: acima de 65%
-- Taxa de conversão (Closer): 20% a 35%
-- ROAS mínimo: acima de 7
-- CAC: monitorado por canal
+$100M OFFERS — Grand Slam Offer:
+Valor = (Sonho x Probabilidade) / (Tempo x Esforço)
+Construção: sonho → obstáculos → soluções → oferta irrecusável → nome que comunica transformação
+Precificação por valor. Stacking de bônus. Garantias fortes.
 
-Dimensionamento MVP: 1 SDR + 1 Closer
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-METAS MENSAIS (3 NÍVEIS)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- Base: meta mínima, garante a operação
-- Agressiva: meta padrão de performance
-- Ambiciosa: meta de excelência com bônus
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FRAMEWORK HORMOZI — $100M OFFERS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-GRAND SLAM OFFER — oferta irrecusável que elimina objeções antes de surgirem
-
-Equação de Valor (Value Equation):
-Valor = (Sonho x Probabilidade Percebida) / (Tempo x Esforço)
-
-Construção da oferta:
-1. Identificar o sonho do cliente
-2. Listar todos os obstáculos entre ele e o sonho
-3. Transformar cada obstáculo em uma solução (entregável)
-4. Empilhar os entregáveis em uma oferta irrecusável
-5. Nomear a oferta comunicando a transformação
-
-Precificação por valor, stacking de bônus, garantias fortes.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-FRAMEWORK HORMOZI — $100M LEADS
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-CORE 4 — canais de aquisição:
+$100M LEADS — Core 4:
 1. Orgânico Quente — base existente
-2. Orgânico Frio — prospecção outbound
+2. Orgânico Frio — outbound sem mídia
 3. Pago Quente — anúncios para audiência conhecida
-4. Pago Frio — anúncios para audiência fria
+4. Pago Frio — escala máxima
 
 Funil: Lead Magnet → Front End → Back End → High End
-Reativação de base, scripts de outreach, conteúdo como aquisição.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-COMO VOCÊ DEVE AGIR
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-- Análise de funil → use KPIs FSS como referência
-- Construção de oferta → aplique Value Equation e Grand Slam Offer
-- Estrutura de proposta → use ancoragem + fechamento FSS
-- Aquisição de leads → aplique Core 4 do Hormozi
-- Relatório do time → métricas de SDR e Closer separadas
-- Diagnóstico comercial → use os 5 pilares FSS
-- Análise de arquivo → foco comercial, insights acionáveis
-- Pedido de imagem → responda com GERAR_IMAGEM: [prompt em inglês]
-- Registro de dados → responda com REGISTRAR_DADOS: {json}"""
+Scripts de outreach: personalização real, foco no problema, CTA de baixo atrito."""
 
 def registrar_na_planilha(dados: dict) -> str:
     try:
@@ -172,22 +170,23 @@ def registrar_na_planilha(dados: dict) -> str:
         ]
 
         aba.append_row(nova_linha)
-        return f"✅ Registrado na planilha:\n📅 {data_str} | 👤 {dados.get('vendedor')}\n📞 {dados.get('empresas')} contatos | 💬 {dados.get('conversas')} conversas | 📅 {dados.get('reunioes')} reuniões | 🤝 {dados.get('fechamentos')} fechamentos | 💰 R${dados.get('receita')}"
+        return f"✅ Registrado!\n📅 {data_str} | 👤 {dados.get('vendedor')}\n📞 {dados.get('empresas')} contatos | 💬 {dados.get('conversas')} conversas | 📅 {dados.get('reunioes')} reuniões | 🤝 {dados.get('fechamentos')} fechamentos | 💰 R${dados.get('receita')}"
     except Exception as e:
         logger.error(f"Erro ao registrar na planilha: {e}")
-        return f"❌ Erro ao registrar na planilha: {str(e)}"
+        return f"❌ Erro ao registrar: {str(e)}"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await update.message.reply_text(
         f"Olá, {user.first_name}! 👋 Sou a *Clara*, sua assistente estratégica.\n\n"
         "Posso ajudar com:\n"
-        "📝 Texto e estratégia comercial\n"
+        "📝 Estratégia e propostas comerciais\n"
+        "🔍 Diagnóstico de clientes (FSS)\n"
+        "🎯 Coach de SDR — scripts e respostas\n"
+        "📄 Análise de PDFs e planilhas\n"
         "🎙️ Áudios\n"
-        "📄 PDFs\n"
-        "📊 Planilhas Excel e CSV\n"
         "🎨 Geração de imagens\n"
-        "📋 Registrar dados do time na planilha\n\n"
+        "📋 Registrar dados na planilha\n\n"
         "_Use /limpar para resetar o histórico._",
         parse_mode="Markdown"
     )
@@ -195,7 +194,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def limpar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     conversation_history[user_id] = []
-    await update.message.reply_text("✅ Histórico limpo! Começando uma nova conversa.")
+    await update.message.reply_text("✅ Histórico limpo!")
 
 async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str):
     user_id = update.effective_user.id
@@ -220,30 +219,20 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE,
         assistant_message = response.content[0].text
         conversation_history[user_id].append({"role": "assistant", "content": assistant_message})
 
-        # Geração de imagem
         if assistant_message.startswith("GERAR_IMAGEM:"):
             prompt_imagem = assistant_message.replace("GERAR_IMAGEM:", "").strip()
             await update.message.reply_text("🎨 Gerando imagem...")
             await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
-
             img_response = openai_client.images.generate(
-                model="dall-e-3",
-                prompt=prompt_imagem,
-                size="1024x1024",
-                quality="standard",
-                n=1
+                model="dall-e-3", prompt=prompt_imagem, size="1024x1024", quality="standard", n=1
             )
-            image_url = img_response.data[0].url
-            img_data = httpx.get(image_url).content
-
+            img_data = httpx.get(img_response.data[0].url).content
             with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
                 tmp.write(img_data)
                 tmp_path = tmp.name
-
             with open(tmp_path, "rb") as img_file:
                 await update.message.reply_photo(photo=img_file)
 
-        # Registro na planilha
         elif assistant_message.startswith("REGISTRAR_DADOS:"):
             json_str = assistant_message.replace("REGISTRAR_DADOS:", "").strip()
             dados = json.loads(json_str)
@@ -259,106 +248,73 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     except Exception as e:
         logger.error(f"Erro ao chamar API: {e}")
-        await update.message.reply_text("Ocorreu um erro ao processar sua mensagem. Tente novamente.")
+        await update.message.reply_text("Ocorreu um erro. Tente novamente.")
 
 async def responder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await processar_mensagem(update, context, update.message.text)
 
 async def responder_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-
     try:
         voice = update.message.voice or update.message.audio
         file = await context.bot.get_file(voice.file_id)
-
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
             await file.download_to_drive(tmp.name)
             with open(tmp.name, "rb") as audio_file:
                 transcricao = groq_client.audio.transcriptions.create(
-                    file=("audio.ogg", audio_file),
-                    model="whisper-large-v3",
-                    language="pt"
+                    file=("audio.ogg", audio_file), model="whisper-large-v3", language="pt"
                 )
-
         texto = transcricao.text.strip()
-
         if not texto:
             await update.message.reply_text("Não consegui entender o áudio. Pode repetir?")
             return
-
         await update.message.reply_text(f"🎙️ *Entendi:* _{texto}_", parse_mode="Markdown")
         await processar_mensagem(update, context, texto)
-
     except Exception as e:
         logger.error(f"Erro ao processar áudio: {e}")
         await update.message.reply_text("Erro ao processar o áudio. Tente novamente.")
 
 async def responder_documento(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-
     doc = update.message.document
     nome = doc.file_name.lower() if doc.file_name else ""
     caption = update.message.caption or "Analise este arquivo com foco comercial e forneça insights práticos e acionáveis."
-
     try:
         file = await context.bot.get_file(doc.file_id)
-
         if nome.endswith(".pdf"):
             with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
                 await file.download_to_drive(tmp.name)
                 reader = PyPDF2.PdfReader(tmp.name)
-                texto_pdf = ""
-                for page in reader.pages:
-                    texto_pdf += page.extract_text() + "\n"
-
+                texto_pdf = "".join(page.extract_text() + "\n" for page in reader.pages)
             if not texto_pdf.strip():
                 await update.message.reply_text("Não consegui extrair texto deste PDF.")
                 return
-
-            texto_pdf = texto_pdf[:15000]
-            prompt = f"{caption}\n\n--- CONTEÚDO DO PDF ({doc.file_name}) ---\n{texto_pdf}"
-            await update.message.reply_text(f"📄 PDF recebido: *{doc.file_name}*\nAnalisando...", parse_mode="Markdown")
+            prompt = f"{caption}\n\n--- PDF: {doc.file_name} ---\n{texto_pdf[:15000]}"
+            await update.message.reply_text(f"📄 *{doc.file_name}* recebido. Analisando...", parse_mode="Markdown")
             await processar_mensagem(update, context, prompt)
-
-        elif nome.endswith(".xlsx") or nome.endswith(".xls"):
+        elif nome.endswith((".xlsx", ".xls")):
             with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
                 await file.download_to_drive(tmp.name)
                 df = pd.read_excel(tmp.name)
-
-            resumo = f"Planilha: {doc.file_name}\nLinhas: {len(df)} | Colunas: {len(df.columns)}\n"
-            resumo += f"Colunas: {', '.join(df.columns.astype(str))}\n\n"
-            resumo += df.head(50).to_string(index=False)
-
-            prompt = f"{caption}\n\n--- DADOS DA PLANILHA ---\n{resumo}"
-            await update.message.reply_text(f"📊 Planilha recebida: *{doc.file_name}*\nAnalisando...", parse_mode="Markdown")
-            await processar_mensagem(update, context, prompt)
-
+            resumo = f"Planilha: {doc.file_name}\nLinhas: {len(df)} | Colunas: {', '.join(df.columns.astype(str))}\n\n{df.head(50).to_string(index=False)}"
+            await update.message.reply_text(f"📊 *{doc.file_name}* recebida. Analisando...", parse_mode="Markdown")
+            await processar_mensagem(update, context, f"{caption}\n\n--- PLANILHA ---\n{resumo}")
         elif nome.endswith(".csv"):
             with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
                 await file.download_to_drive(tmp.name)
                 df = pd.read_csv(tmp.name)
-
-            resumo = f"Arquivo: {doc.file_name}\nLinhas: {len(df)} | Colunas: {len(df.columns)}\n"
-            resumo += f"Colunas: {', '.join(df.columns.astype(str))}\n\n"
-            resumo += df.head(50).to_string(index=False)
-
-            prompt = f"{caption}\n\n--- DADOS DO CSV ---\n{resumo}"
-            await update.message.reply_text(f"📊 CSV recebido: *{doc.file_name}*\nAnalisando...", parse_mode="Markdown")
-            await processar_mensagem(update, context, prompt)
-
-        elif nome.endswith(".txt") or nome.endswith(".md"):
+            resumo = f"CSV: {doc.file_name}\nLinhas: {len(df)} | Colunas: {', '.join(df.columns.astype(str))}\n\n{df.head(50).to_string(index=False)}"
+            await update.message.reply_text(f"📊 *{doc.file_name}* recebido. Analisando...", parse_mode="Markdown")
+            await processar_mensagem(update, context, f"{caption}\n\n--- CSV ---\n{resumo}")
+        elif nome.endswith((".txt", ".md")):
             with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as tmp:
                 await file.download_to_drive(tmp.name)
                 with open(tmp.name, "r", encoding="utf-8", errors="ignore") as f:
                     conteudo = f.read()[:15000]
-
-            prompt = f"{caption}\n\n--- CONTEÚDO DO ARQUIVO ---\n{conteudo}"
-            await update.message.reply_text(f"📝 Arquivo recebido: *{doc.file_name}*\nAnalisando...", parse_mode="Markdown")
-            await processar_mensagem(update, context, prompt)
-
+            await update.message.reply_text(f"📝 *{doc.file_name}* recebido. Analisando...", parse_mode="Markdown")
+            await processar_mensagem(update, context, f"{caption}\n\n--- ARQUIVO ---\n{conteudo}")
         else:
-            await update.message.reply_text("Formato não suportado.\n\nSuporto: PDF, Excel (.xlsx), CSV, TXT")
-
+            await update.message.reply_text("Formato não suportado. Aceito: PDF, Excel, CSV, TXT.")
     except Exception as e:
         logger.error(f"Erro ao processar documento: {e}")
         await update.message.reply_text("Erro ao processar o arquivo. Tente novamente.")
@@ -370,7 +326,7 @@ def main():
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, responder_audio))
     app.add_handler(MessageHandler(filters.Document.ALL, responder_documento))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
-    logger.info("Bot Clara iniciado com Google Sheets!")
+    logger.info("Bot Clara iniciado!")
     app.run_polling()
 
 if __name__ == "__main__":
