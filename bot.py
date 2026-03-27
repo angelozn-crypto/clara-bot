@@ -159,14 +159,16 @@ def gerar_briefing_diario() -> str:
         aba_dados = sheet.worksheet("Dados")
         dados = aba_dados.get_all_values()
 
-        mes_atual = hoje.strftime("%Y-%m")
-        mes_slash = hoje.strftime("%m/%Y")
+        from datetime import timedelta
+        ontem = hoje - timedelta(days=1)
+        ontem_str = ontem.strftime("%Y-%m-%d")
+        ontem_slash = ontem.strftime("%d/%m/%Y")
 
-        def data_do_mes(val):
+        def data_de_ontem(val):
             v = str(val).strip()
-            return v.startswith(mes_atual) or v.endswith(mes_slash) or f"/{hoje.strftime('%m')}/{hoje.year}" in v
+            return v.startswith(ontem_str) or v == ontem_slash
 
-        registros_mes = [r for r in dados[1:] if r and data_do_mes(r[0])]
+        registros_ontem = [r for r in dados[1:] if r and data_de_ontem(r[0])]
 
         def to_int(v):
             try: return int(float(str(v).replace(',','.')))
@@ -176,26 +178,54 @@ def gerar_briefing_diario() -> str:
             try: return float(str(v).replace(',','.'))
             except: return 0.0
 
-        total_contatos = sum(to_int(r[2]) for r in registros_mes)
-        total_reunioes = sum(to_int(r[4]) for r in registros_mes)
-        total_fechamentos = sum(to_int(r[5]) for r in registros_mes)
-        total_receita = sum(to_float(r[6]) for r in registros_mes)
+        por_vendedor = {}
+        for r in registros_ontem:
+            vendedor = r[1].strip() if r[1] else "Desconhecido"
+            if vendedor not in por_vendedor:
+                por_vendedor[vendedor] = {"contatos": 0, "conversas": 0, "reunioes": 0, "fechamentos": 0, "receita": 0.0}
+            por_vendedor[vendedor]["contatos"] += to_int(r[2])
+            por_vendedor[vendedor]["conversas"] += to_int(r[3])
+            por_vendedor[vendedor]["reunioes"] += to_int(r[4])
+            por_vendedor[vendedor]["fechamentos"] += to_int(r[5])
+            por_vendedor[vendedor]["receita"] += to_float(r[6])
 
-        resumo_planilha = f"Mês atual: {total_contatos} contatos | {total_reunioes} reuniões | {total_fechamentos} fechamentos | R${total_receita:,.0f}"
+        if por_vendedor:
+            linhas = [f"Resultado de ontem ({ontem.strftime('%d/%m')}) por vendedor:"]
+            for v, d in por_vendedor.items():
+                linhas.append(f"• {v}: {d['contatos']} contatos | {d['conversas']} conversas | {d['reunioes']} reuniões | {d['fechamentos']} fechamentos | R${d['receita']:,.0f}")
+            resumo_ontem = "\n".join(linhas)
+        else:
+            resumo_ontem = f"Nenhum registro encontrado para ontem ({ontem.strftime('%d/%m/%Y')}). Pode ser feriado, fim de semana ou dado ainda não lançado."
+
+        # Acumulado do mês
+        mes_atual = hoje.strftime("%Y-%m")
+        mes_slash = hoje.strftime("%m/%Y")
+        def data_do_mes(val):
+            v = str(val).strip()
+            return v.startswith(mes_atual) or v.endswith(mes_slash) or f"/{hoje.strftime('%m')}/{hoje.year}" in v
+        registros_mes = [r for r in dados[1:] if r and data_do_mes(r[0])]
+        total_contatos_mes = sum(to_int(r[2]) for r in registros_mes)
+        total_reunioes_mes = sum(to_int(r[4]) for r in registros_mes)
+        total_fechamentos_mes = sum(to_int(r[5]) for r in registros_mes)
+        total_receita_mes = sum(to_float(r[6]) for r in registros_mes)
+        resumo_mes = f"Acumulado de {hoje.strftime('%B/%Y')}: {total_contatos_mes} contatos | {total_reunioes_mes} reuniões | {total_fechamentos_mes} fechamentos | R${total_receita_mes:,.0f}"
+
+        resumo_planilha = resumo_ontem + "\n\n" + resumo_mes
     except Exception as e:
         resumo_planilha = f"(não foi possível carregar dados da planilha: {e})"
 
     prompt_briefing = f"""Gere um briefing diário motivador e estratégico para Zambom, Head Comercial da TRILIA.
 
 Data: {dia_semana}, {data_str}
-Dados do mês até agora: {resumo_planilha}
+Dados de ontem por vendedor: {resumo_planilha}
 
 O briefing deve ter:
 1. SAUDAÇÃO — curta, com o dia da semana
 2. FOCO DO DIA — 1 prioridade comercial clara para hoje
-3. NÚMEROS DO MÊS — resumo do que foi feito e o que falta para bater a meta
-4. DESAFIO DO DIA — 1 ação específica e ousada para o time executar hoje
-5. FRASE MOTIVACIONAL — de Hormozi, Cardone ou similar, em português
+3. RESULTADO DE ONTEM — mostre os números por vendedor, destaque quem se destacou e quem ficou abaixo
+4. ACUMULADO DO MÊS — mostre o total do mês e avalie o ritmo: está no caminho certo para bater a meta?
+5. DESAFIO DO DIA — 1 ação específica e ousada para o time executar hoje
+6. FRASE MOTIVACIONAL — de Hormozi, Cardone ou similar, em português
 
 Seja direto, energético e orientado a resultado. Máximo 20 linhas."""
 
