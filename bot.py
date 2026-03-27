@@ -231,7 +231,7 @@ Seja direto, energético e orientado a resultado. Máximo 20 linhas."""
 
     try:
         response = anthropic_client.messages.create(
-            model="claude-opus-4-5",
+            model="claude-sonnet-4-6",
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt_briefing}]
         )
@@ -305,7 +305,7 @@ async def processar_mensagem(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     try:
         response = anthropic_client.messages.create(
-            model="claude-opus-4-5", max_tokens=2048, system=SYSTEM_PROMPT,
+            model="claude-sonnet-4-6", max_tokens=2048, system=SYSTEM_PROMPT,
             messages=conversation_history[user_id]
         )
         assistant_message = response.content[0].text
@@ -404,6 +404,54 @@ async def responder_documento(update: Update, context: ContextTypes.DEFAULT_TYPE
         logger.error(f"Erro documento: {e}")
         await update.message.reply_text("Erro ao processar arquivo.")
 
+
+async def responder_foto(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    try:
+        foto = update.message.photo[-1]  # maior resolução
+        file = await context.bot.get_file(foto.file_id)
+        caption = update.message.caption or "Analise esta imagem e forneça insights relevantes."
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            await file.download_to_drive(tmp.name)
+            with open(tmp.name, "rb") as img_file:
+                import base64
+                img_b64 = base64.b64encode(img_file.read()).decode("utf-8")
+
+        user_id = update.effective_user.id
+        if user_id not in conversation_history:
+            conversation_history[user_id] = []
+
+        conversation_history[user_id].append({
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                {"type": "text", "text": caption}
+            ]
+        })
+
+        if len(conversation_history[user_id]) > 20:
+            conversation_history[user_id] = conversation_history[user_id][-20:]
+
+        response = anthropic_client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=2048,
+            system=SYSTEM_PROMPT,
+            messages=conversation_history[user_id]
+        )
+        assistant_message = response.content[0].text
+        conversation_history[user_id].append({"role": "assistant", "content": assistant_message})
+
+        if len(assistant_message) > 4096:
+            for i in range(0, len(assistant_message), 4096):
+                await update.message.reply_text(assistant_message[i:i+4096])
+        else:
+            await update.message.reply_text(assistant_message)
+
+    except Exception as e:
+        logger.error(f"Erro ao processar foto: {e}")
+        await update.message.reply_text("Erro ao processar a imagem. Tente novamente.")
+
 def main():
     app = ApplicationBuilder().token(telegram_token).build()
 
@@ -422,6 +470,7 @@ def main():
     app.add_handler(CommandHandler("limpar", limpar))
     app.add_handler(CommandHandler("briefing", cmd_briefing))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, responder_audio))
+    app.add_handler(MessageHandler(filters.PHOTO, responder_foto))
     app.add_handler(MessageHandler(filters.Document.ALL, responder_documento))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, responder))
     logger.info("Bot Clara iniciado com briefing diário!")
