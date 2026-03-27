@@ -160,12 +160,26 @@ def gerar_briefing_diario() -> str:
         dados = aba_dados.get_all_values()
 
         mes_atual = hoje.strftime("%Y-%m")
-        registros_mes = [r for r in dados[1:] if r and r[0].startswith(mes_atual[:7])]
+        mes_slash = hoje.strftime("%m/%Y")
 
-        total_contatos = sum(int(r[2]) for r in registros_mes if r[2].isdigit())
-        total_reunioes = sum(int(r[4]) for r in registros_mes if r[4].isdigit())
-        total_fechamentos = sum(int(r[5]) for r in registros_mes if r[5].isdigit())
-        total_receita = sum(float(r[6]) for r in registros_mes if r[6].replace('.','').replace(',','').isdigit())
+        def data_do_mes(val):
+            v = str(val).strip()
+            return v.startswith(mes_atual) or v.endswith(mes_slash) or f"/{hoje.strftime('%m')}/{hoje.year}" in v
+
+        registros_mes = [r for r in dados[1:] if r and data_do_mes(r[0])]
+
+        def to_int(v):
+            try: return int(float(str(v).replace(',','.')))
+            except: return 0
+
+        def to_float(v):
+            try: return float(str(v).replace(',','.'))
+            except: return 0.0
+
+        total_contatos = sum(to_int(r[2]) for r in registros_mes)
+        total_reunioes = sum(to_int(r[4]) for r in registros_mes)
+        total_fechamentos = sum(to_int(r[5]) for r in registros_mes)
+        total_receita = sum(to_float(r[6]) for r in registros_mes)
 
         resumo_planilha = f"Mês atual: {total_contatos} contatos | {total_reunioes} reuniões | {total_fechamentos} fechamentos | R${total_receita:,.0f}"
     except Exception as e:
